@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Stability Management System</title>
+<link rel="manifest" href="manifest.json"><meta name="theme-color" content="#15232b"><link rel="icon" href="icon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<style>
+:root{--bg:#f4f6f7;--ink:#15232b;--mut:#5d6b73;--card:#fff;--line:#dbe2e6;--pri:#1f5fae;--side:#15232b;
+--g:#4caf50;--y:#f2c230;--o:#f08a24;--r:#e53935;--dr:#8e0f1b;--dg:#1b5e20}
+*{box-sizing:border-box}body{margin:0;font-family:Cairo,Tahoma,sans-serif;background:var(--bg);color:var(--ink);font-size:15px}
+#app{display:flex;min-height:100vh}nav{width:220px;background:var(--side);color:#cfdbe1;padding:14px 0;flex-shrink:0}
+nav h1{font-size:15px;margin:0 16px 12px;color:#fff}nav a{display:block;padding:10px 16px;color:inherit;text-decoration:none;cursor:pointer;border-inline-start:3px solid transparent}
+nav a.on{background:#1f3540;color:#fff;border-color:#2f80ed}main{flex:1;padding:18px;min-width:0}
+.top{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap}
+h2{margin:0;font-size:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;border-inline-start:6px solid var(--c)}.kpi b{font-size:24px;display:block}
+table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--line);text-align:start;font-size:14px;vertical-align:top}th{background:#eef2f4;position:sticky;top:0}
+.tw{overflow-x:auto}button,.btn{font:inherit;border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
+button.p{background:var(--pri);color:#fff;border-color:var(--pri)}button.d{color:var(--r)}button:disabled{opacity:.4;cursor:default}
+input,select,textarea{font:inherit;padding:7px;border:1px solid var(--line);border-radius:6px;width:100%;background:#fff}
+label{display:block;font-size:13px;color:var(--mut);margin-bottom:3px}.f{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.tag{display:inline-block;padding:2px 8px;border-radius:10px;color:#fff;font-size:12px;white-space:nowrap}.tag.y,.tag.l{color:#222}
+.c-g{background:var(--g)}.c-y{background:var(--y)}.c-o{background:var(--o)}.c-r{background:var(--r)}.c-dr{background:var(--dr)}.c-dg{background:var(--dg)}
+.mod{position:fixed;inset:0;background:#0007;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px;z-index:9}
+.mod>div{background:#fff;border-radius:8px;padding:16px;width:min(760px,100%)}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.warn{background:#fff4e5;border:1px solid #f0c27a;padding:8px;border-radius:6px;margin:8px 0}.bad{color:var(--r)}.ok{color:var(--dg)}
+#login{max-width:380px;margin:8vh auto;padding:16px}.muted{color:var(--mut);font-size:13px}
+@media(max-width:760px){#app{flex-direction:column}nav{width:100%;display:flex;overflow-x:auto;padding:0}nav h1{display:none}nav a{white-space:nowrap;border-inline-start:0;border-bottom:3px solid transparent}nav a.on{border-color:#2f80ed}}
+@media print{nav,.top button,.noprint{display:none!important}main{padding:0}}
+</style></head><body><div id="root"></div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const pd=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)};
+const addM=(s,m)=>{const d=pd(s),x=d.getDate();d.setMonth(d.getMonth()+m);if(d.getDate()!==x)d.setDate(0);return iso(d)};
+const today=()=>iso(new Date()),diff=(a,b)=>Math.round((pd(a)-pd(b))/864e5),uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+/* ---------- i18n ---------- */
+let LANG=localStorage.getItem('sms_lang')||'ar';
+const T={dashboard:['لوحة التحكم','Dashboard'],products:['المنتجات','Products'],studies:['دراسات الثبات','Stability Studies'],schedule:['جدول العينات','Sample Schedule'],results:['النتائج','Results'],reports:['التقارير','Reports'],users:['المستخدمون والصلاحيات','Users & Permissions'],audit:['سجل العمليات','Audit Trail'],settings:['الإعدادات','Settings'],logout:['خروج','Logout'],add:['إضافة','Add'],save:['حفظ','Save'],cancel:['إلغاء','Cancel'],edit:['تعديل','Edit'],none:['لا توجد بيانات','No data']};
+const t=k=>(T[k]||[k,k])[LANG==='ar'?0:1];
+/* ---------- constants ---------- */
+const FIELDS=[['product','Product Name / Concentration'],['form','Dosage Form'],['pack','Volume / Pack'],['batch','Batch Number'],['api','Active Ingredient'],['holder','License Holder'],['mfr','Manufacturer'],['reason','Study Reason'],['mfgDate','Manufacturing Date','date'],['expDate','Expiry Date','date'],['startDate','Incubation / Study Start Date','date'],['protocol','Study Protocol'],['notes','Notes']];
+const REQ=['product','batch','startDate','protocol'];
+const ROLES=['Admin','R&D','QC','QA','Viewer'];
+const STATES=['Scheduled','Due','Overdue','Sampled','Under Testing','Reviewed','Approved'];
+const CAN={study:['Admin','R&D'],sample:['Admin','QC'],review:['Admin','QA'],users:['Admin'],del:['Admin']};
+/* ---------- data layer ---------- */
+const D={products:[],studies:[],audit:[],users:[]},COLS=Object.keys(D);let ME=null,FB=null,settings=JSON.parse(localStorage.getItem('sms_set')||'{"y":7,"o":3,"notify":true}');
+const LS=JSON.parse(localStorage.getItem('sms_data')||'{}');
+function persist(){localStorage.setItem('sms_data',JSON.stringify(LS))}
+async function dbSet(col,id,obj){
+  if(FB){await FB.db.collection(col).doc(id).set(obj)}else{(LS[col]=LS[col]||{})[id]=obj;persist();D[col]=Object.values(LS[col])}
+}
+async function dbDel(col,id){if(FB){await FB.db.collection(col).doc(id).delete()}else{delete LS[col][id];persist();D[col]=Object.values(LS[col])}}
+async function audit(action,entity,entityId,o,n){
+  const e={id:uid(),ts:new Date().toISOString(),user:ME.name+' ('+ME.role+')',action,entity,entityId,old:o==null?'':JSON.stringify(o),new:n==null?'':JSON.stringify(n)};
+  await dbSet('audit',e.id,e);
+}
+const can=a=>ME&&CAN[a].includes(ME.role);
+async function initBackend(){
+  const cfg=window.FIREBASE_CONFIG;
+  if(cfg){
+    for(const u of ['app','auth','firestore'])await new Promise((ok,no)=>{const s=document.createElement('script');s.src=`https://www.gstatic.com/firebasejs/10.12.2/firebase-${u}-compat.js`;s.onload=ok;s.onerror=()=>no(new Error('Firebase load failed'));document.head.appendChild(s)});
+    firebase.initializeApp(cfg);const db=firebase.firestore();
+    try{await db.enablePersistence({synchronizeTabs:true})}catch(e){console.warn(e)}
+    FB={db,auth:firebase.auth()};
+  }else COLS.forEach(c=>D[c]=Object.values(LS[c]||{}));
+}
+function listen(){
+  if(!FB)return;
+  COLS.forEach(c=>FB.db.collection(c).onSnapshot(s=>{D[c]=s.docs.map(d=>d.data());if(ME)draw()}));
+}
+/* ---------- auth ---------- */
+const hash=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+async function signup(name,email,pass){
+  if(FB){const c=await FB.auth.createUserWithEmailAndPassword(email,pass);const first=(await FB.db.collection('users').limit(1).get()).empty;
+    const u={id:c.user.uid,name,email,role:first?'Admin':'Viewer'};await dbSet('users',u.id,u);ME=u;await audit('create','user',u.id,null,{name,email,role:u.role});return}
+  if(D.users.some(u=>u.email===email))throw new Error('الإيميل مسجل');
+  const u={id:uid(),name,email,pass:await hash(pass),role:D.users.length?'Viewer':'Admin'};await dbSet('users',u.id,u);ME=u;sessionStorage.setItem('sms_me',u.id);await audit('create','user',u.id,null,{name,email,role:u.role});
+}
+async function login(email,pass){
+  if(FB){const c=await FB.auth.signInWithEmailAndPassword(email,pass);await new Promise(r=>setTimeout(r,800));ME=D.users.find(u=>u.id===c.user.uid)||(await FB.db.collection('users').doc(c.user.uid).get()).data();if(!ME)throw new Error('لا يوجد ملف مستخدم');return}
+  const h=await hash(pass),u=D.users.find(u=>u.email===email&&u.pass===h);if(!u)throw new Error('بيانات الدخول غير صحيحة');ME=u;sessionStorage.setItem('sms_me',u.id);
+}
+async function logout(){if(FB)await FB.auth.signOut();sessionStorage.removeItem('sms_me');ME=null;draw()}
+/* ---------- schedule engine ---------- */
+function parsePoints(s){const a=String(s||'').split(/[,،;\s]+/).map(x=>x.replace(/m$/i,'').trim()).filter(Boolean).map(Number);return a.length&&a.every(n=>n>0&&isFinite(n))?[...new Set(a)].sort((x,y)=>x-y):null}
+function rowsOf(st){
+  if(!st.startDate||!st.points)return[];
+  return st.points.map(m=>({st,m,due:addM(st.startDate,m),rec:(st.samples||{})[m]||{}}));
+}
+function stat(r){
+  const s=r.rec.state;if(s&&['Sampled','Under Testing','Reviewed','Approved'].includes(s))return{state:s,cls:'c-dg',days:null};
+  const d=diff(r.due,today());
+  if(d<0)return{state:'Overdue',cls:'c-dr',days:d};if(d===0)return{state:'Due',cls:'c-r',days:0};
+  if(d<=settings.o)return{state:'Scheduled',cls:'c-o',days:d};if(d<=settings.y)return{state:'Scheduled',cls:'c-y',days:d};return{state:'Scheduled',cls:'c-g',days:d};
+}
+const allRows=()=>D.studies.flatMap(rowsOf).map(r=>({...r,s:stat(r)}));
+const tag=(r)=>`<span class="tag ${r.s.cls} ${r.s.cls==='c-y'?'y':''}">${r.s.state}${r.s.days!=null&&r.s.state==='Scheduled'?' · '+r.s.days+'d':''}${r.s.state==='Overdue'?' · '+(-r.s.days)+'d':''}</span>`;
+function notifyCheck(){
+  if(!settings.notify||!('Notification' in window)||Notification.permission!=='granted')return;
+  const sent=JSON.parse(localStorage.getItem('sms_sent')||'{}');
+  for(const r of allRows()){if(r.s.cls==='c-g'||r.s.cls==='c-dg')continue;const stage=r.s.cls,k=r.st.id+'|'+r.m+'|'+stage+(stage==='c-dr'?'|'+today():'');
+    if(sent[k])continue;sent[k]=1;new Notification('Stability: '+r.st.product+' / '+r.st.batch,{body:`${r.m}M — ${r.due} — ${r.s.state}`,tag:k})}
+  localStorage.setItem('sms_sent',JSON.stringify(sent));
+}
+/* ---------- UI helpers ---------- */
+let VIEW='dashboard',FILTER='';
+const nav=['dashboard','products','studies','schedule','results','reports','users','audit','settings'];
+function modal(html){const m=document.createElement('div');m.className='mod';m.innerHTML='<div>'+html+'</div>';m.addEventListener('mousedown',e=>{if(e.target===m)m.remove()});document.body.appendChild(m);return m}
+const val=(m,n)=>m.querySelector('[name='+n+']').value.trim();
+function table(h,rows){return rows.length?`<div class="tw"><table><tr>${h.map(x=>'<th>'+x+'</th>').join('')}</tr>${rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')}</table></div>`:`<p class="muted">${t('none')}</p>`}
+function fieldHtml([k,l,ty],v){return `<div><label>${l}${REQ.includes(k)?' *':''}</label>${k==='notes'||k==='protocol'?`<textarea name="${k}" rows="2">${esc(v)}</textarea>`:`<input name="${k}" type="${ty||'text'}" value="${esc(v)}">`}</div>`}
+/* ---------- views ---------- */
+const V={};
+V.dashboard=()=>{
+  const R=allRows(),c=x=>R.filter(r=>r.s.cls===x).length,mk=(l,n,col)=>`<div class="kpi" style="--c:var(${col})"><b>${n}</b>${l}</div>`;
+  const al=R.filter(r=>['c-dr','c-r','c-o','c-y'].includes(r.s.cls)).sort((a,b)=>a.due<b.due?-1:1);
+  return `<div class="top"><h2>${t('dashboard')}</h2></div><div class="grid">${mk('Studies',D.studies.length,'--pri')+mk('Overdue',c('c-dr'),'--dr')+mk('Due today',c('c-r'),'--r')+mk('≤'+settings.o+' days',c('c-o'),'--o')+mk('≤'+settings.y+' days',c('c-y'),'--y')+mk('Later',c('c-g'),'--g')+mk('Sampled+',c('c-dg'),'--dg')}</div>
+  <div class="card"><b>Alerts</b>${table(['Product','Batch','Point','Due','Status'],al.map(r=>[esc(r.st.product),esc(r.st.batch),r.m+'M',r.due,tag(r)]))}</div>
+  ${D.studies.filter(s=>!s.points).length?`<div class="warn">يوجد ${D.studies.filter(s=>!s.points).length} دراسة بدون نقاط بروتوكول — لم يتم توليد مواعيد لها.</div>`:''}
+  ${'Notification' in window&&Notification.permission!=='granted'?'<button onclick="Notification.requestPermission().then(()=>{notifyCheck();draw()})">تفعيل الإشعارات على هذا الجهاز</button>':''}`;
+};
+V.products=()=>`<div class="top"><h2>${t('products')}</h2>${can('study')?`<button class="p" onclick="productForm()">${t('add')}</button>`:''}</div><div class="card">${table(['Product','Form','Pack','API','License Holder','Manufacturer',''],D.products.map(p=>[esc(p.product),esc(p.form),esc(p.pack),esc(p.api),esc(p.holder),esc(p.mfr),can('study')?`<button onclick="productForm('${p.id}')">${t('edit')}</button>`:'']))}</div>`;
+window.productForm=id=>{const p=D.products.find(x=>x.id===id)||{},F=FIELDS.filter(f=>['product','form','pack','api','holder','mfr'].includes(f[0]));
+  const m=modal(`<h3>${t('products')}</h3><div class="f">${F.map(f=>fieldHtml(f,p[f[0]])).join('')}</div><div class="row"><button class="p" id="ok">${t('save')}</button><button id="no">${t('cancel')}</button></div>`);
+  m.querySelector('#no').onclick=()=>m.remove();m.querySelector('#ok').onclick=async()=>{const n={id:p.id||uid()};F.forEach(f=>n[f[0]]=val(m,f[0]));if(!n.product)return alert('اسم المنتج مطلوب');await dbSet('products',n.id,n);await audit(p.id?'update':'create','product',n.id,p.id?p:null,n);m.remove();draw()}};
+V.studies=()=>{const q=FILTER.toLowerCase(),L=D.studies.filter(s=>!q||(s.product+s.batch+s.reason).toLowerCase().includes(q));
+  return `<div class="top"><h2>${t('studies')}</h2><div class="row" style="margin:0"><input placeholder="بحث" value="${esc(FILTER)}" oninput="FILTER=this.value;draw();" style="width:160px">${can('study')?`<button class="p" onclick="studyForm()">${t('add')}</button>`:''}</div></div>
+  <div class="card">${table(['Product','Batch','Start','Points','Reason','Progress',''],L.map(s=>{const R=rowsOf(s).map(r=>({...r,s:stat(r)}));return [esc(s.product),esc(s.batch),s.startDate,s.points?s.points.join('-')+'M':'<span class="bad">غير محدد</span>',esc(s.reason),R.map(tag).join(' '),`<button onclick="studyForm('${s.id}')">${can('study')?t('edit'):'View'}</button>`]}))}</div>`};
+window.studyForm=id=>{
+  const s=D.studies.find(x=>x.id===id)||{},ro=!can('study'),locked=Object.values(s.samples||{}).some(x=>x.state==='Approved');
+  const m=modal(`<h3>${esc(s.product||'Study')}</h3>${D.products.length&&!id?`<label>من قاعدة المنتجات</label><select id="pp"><option value="">—</option>${D.products.map(p=>`<option value="${p.id}">${esc(p.product)}</option>`).join('')}</select>`:''}
+  <div class="f">${FIELDS.map(f=>fieldHtml(f,s[f[0]])).join('')}<div><label>Sampling points (months, per protocol) *</label><input name="points" placeholder="3,6,9,12" value="${s.points?s.points.join(','):''}"></div></div>
+  ${locked?'<div class="warn">يوجد عينات معتمدة: تغيير تاريخ البداية أو النقاط غير مسموح.</div>':''}
+  <div class="row">${ro?'':`<button class="p" id="ok">${t('save')}</button>`}${id&&can('del')?'<button class="d" id="del">حذف</button>':''}<button id="no">${t('cancel')}</button></div>`);
+  m.querySelectorAll('input,textarea').forEach(i=>i.disabled=ro||(locked&&['startDate','points'].includes(i.name)));
+  m.querySelector('#no').onclick=()=>m.remove();
+  const pp=m.querySelector('#pp');if(pp)pp.onchange=()=>{const p=D.products.find(x=>x.id===pp.value);if(p)['product','form','pack','api','holder','mfr'].forEach(k=>m.querySelector('[name='+k+']').value=p[k]||'')};
+  if(m.querySelector('#del'))m.querySelector('#del').onclick=async()=>{if(locked)return alert('لا يمكن حذف دراسة بها عينات معتمدة');if(!confirm('تأكيد الحذف؟ سيُسجل في Audit Trail'))return;await audit('delete','study',s.id,s,null);await dbDel('studies',s.id);m.remove();draw()};
+  if(m.querySelector('#ok'))m.querySelector('#ok').onclick=async()=>{
+    const n={...s,id:s.id||uid(),samples:s.samples||{}};FIELDS.forEach(f=>n[f[0]]=val(m,f[0]));
+    for(const k of REQ)if(!n[k])return alert('حقل مطلوب: '+FIELDS.find(f=>f[0]===k)[1]);
+    n.points=parsePoints(val(m,'points'));if(!n.points)return alert('أدخل نقاط البروتوكول كأرقام شهور مثل 3,6,9,12');
+    const cur=D.studies.find(x=>x.id===n.id);if(cur&&(cur.ver||0)!==(s.ver||0))return alert('تم تعديل هذه الدراسة من مستخدم آخر أثناء فتحها. أغلق وأعد الفتح.');
+    n.ver=(s.ver||0)+1;await dbSet('studies',n.id,n);await audit(s.id?'update':'create','study',n.id,s.id?s:null,n);m.remove();draw()}};
+V.schedule=()=>{const R=allRows().sort((a,b)=>a.due<b.due?-1:1);
+  return `<div class="top"><h2>${t('schedule')}</h2></div><div class="card">${table(['Due','Point','Product','Batch','Status','State',''],R.map(r=>[r.due,r.m+'M',esc(r.st.product),esc(r.st.batch),tag(r),esc(r.rec.state||'—'),(can('sample')||can('review'))?`<button onclick="sampleForm('${r.st.id}',${r.m})">فتح</button>`:'']))}</div>`};
+window.sampleForm=(sid,mo)=>{
+  const st=D.studies.find(x=>x.id===sid),rec={...(st.samples||{})[mo]},due=addM(st.startDate,mo),lock=rec.state==='Approved';
+  const opts=[...(can('sample')?['Sampled','Under Testing']:[]),...(can('review')?['Reviewed','Approved']:[])];
+  const inp=(n,l,ty='text')=>`<div><label>${l}</label><input name="${n}" type="${ty}" value="${esc(rec[n])}"></div>`;
+  const m=modal(`<h3>${esc(st.product)} — ${esc(st.batch)} — ${mo}M (${due})</h3>${lock?'<div class="warn">معتمدة — السجل مقفل.</div>':''}
+  <div class="f">${inp('actualDate','تاريخ السحب الفعلي','date')+inp('by','تم السحب بواسطة')+inp('sampleNo','رقم العينة')}
+  <div><label>State</label><select name="state"><option value="">${rec.state||'(حسب الموعد)'}</option>${opts.map(o=>`<option ${rec.state===o?'selected':''}>${o}</option>`).join('')}</select></div>
+  <div><label>Conformity</label><select name="conf">${['','Conforms','OOS','Pending'].map(o=>`<option ${rec.conf===o?'selected':''}>${o}</option>`).join('')}</select></div></div>
+  <label>الاختبارات المطلوبة</label><textarea name="tests" rows="2">${esc(rec.tests)}</textarea><label>النتائج</label><textarea name="results" rows="3">${esc(rec.results)}</textarea>
+  <label>OOS / انحراف (مطلوب عند OOS)</label><textarea name="oos" rows="2">${esc(rec.oos)}</textarea><label>ملاحظات</label><textarea name="notes" rows="2">${esc(rec.notes)}</textarea>
+  <label>المرفقات (اسم الملف/المرجع — رفع الملفات في المرحلة 2)</label><input name="files" value="${esc(rec.files)}">
+  <div class="row">${lock?'':`<button class="p" id="ok">${t('save')}</button>`}<button id="no">${t('cancel')}</button></div>`);
+  m.querySelector('#no').onclick=()=>m.remove();if(lock||!opts.length)m.querySelectorAll('input,select,textarea').forEach(i=>i.disabled=true);
+  if(m.querySelector('#ok'))m.querySelector('#ok').onclick=async()=>{
+    const n={...rec};['actualDate','by','sampleNo','tests','results','conf','oos','notes','files'].forEach(k=>n[k]=val(m,k));const ns=val(m,'state');if(ns)n.state=ns;
+    if(['Sampled','Under Testing','Reviewed','Approved'].includes(n.state)&&(!n.actualDate||!n.by||!n.sampleNo))return alert('تاريخ السحب والاسم ورقم العينة مطلوبين');
+    if(n.state==='Approved'&&(!n.conf||n.conf==='Pending'))return alert('حدد حالة المطابقة قبل الاعتماد');
+    if(n.conf==='OOS'&&!n.oos)return alert('OOS يتطلب توثيق الانحراف');if(n.state==='Approved'&&n.conf==='OOS'&&!n.oos)return;
+    const cur=(D.studies.find(x=>x.id===sid)||{}).ver||0;if(cur!==(st.ver||0))return alert('تعديل متعارض من مستخدم آخر. أعد الفتح.');
+    const ns2={...st,samples:{...(st.samples||{}),[mo]:n},ver:(st.ver||0)+1};await dbSet('studies',sid,ns2);await audit('sample','study:'+st.batch+':'+mo+'M',sid,rec,n);m.remove();draw()}};
+V.results=()=>{const R=allRows().filter(r=>r.rec.results||r.rec.conf);return `<div class="top"><h2>${t('results')}</h2></div><div class="card">${table(['Product','Batch','Point','Sampled','By','Sample #','Conformity','State','Results'],R.map(r=>[esc(r.st.product),esc(r.st.batch),r.m+'M',r.rec.actualDate||'',esc(r.rec.by),esc(r.rec.sampleNo),`<b class="${r.rec.conf==='OOS'?'bad':''}">${esc(r.rec.conf)}</b>`,r.s.state,esc(r.rec.results)]))}</div>`};
+/* reports */
+const REP={
+ studies:['الدراسات الحالية',()=>D.studies.map(s=>({Product:s.product,Form:s.form,Pack:s.pack,Batch:s.batch,API:s.api,Holder:s.holder,Manufacturer:s.mfr,Reason:s.reason,Mfg:s.mfgDate,Exp:s.expDate,Start:s.startDate,Protocol:s.protocol,Points:(s.points||[]).join(',')}))],
+ due:['المستحقة والمتأخرة',()=>allRows().filter(r=>['c-dr','c-r'].includes(r.s.cls)).map(r=>({Product:r.st.product,Batch:r.st.batch,Point:r.m+'M',Due:r.due,Status:r.s.state}))],
+ sampled:['العينات المسحوبة',()=>allRows().filter(r=>r.s.cls==='c-dg').map(r=>({Product:r.st.product,Batch:r.st.batch,Point:r.m+'M',Sampled:r.rec.actualDate,By:r.rec.by,Sample:r.rec.sampleNo,State:r.s.state}))],
+ results:['نتائج التحاليل',()=>allRows().filter(r=>r.rec.results||r.rec.conf).map(r=>({Product:r.st.product,Batch:r.st.batch,Point:r.m+'M',Tests:r.rec.tests,Results:r.rec.results,Conformity:r.rec.conf,OOS:r.rec.oos,State:r.s.state}))],
+ done:['الدراسات المكتملة (كل النقاط Approved)',()=>D.studies.filter(s=>s.points&&s.points.every(m=>((s.samples||{})[m]||{}).state==='Approved')).map(s=>({Product:s.product,Batch:s.batch,Start:s.startDate,Points:s.points.join(',')}))],
+ reason:['المنتجات حسب سبب الدراسة',()=>[...D.studies].sort((a,b)=>(a.reason||'')<(b.reason||'')?-1:1).map(s=>({Reason:s.reason,Product:s.product,Batch:s.batch}))],
+ monthly:['تقرير شهري بالمواعيد',()=>{const mo=document.getElementById('rm')?.value||today().slice(0,7);return allRows().filter(r=>r.due.startsWith(mo)).sort((a,b)=>a.due<b.due?-1:1).map(r=>({Due:r.due,Product:r.st.product,Batch:r.st.batch,Point:r.m+'M',Status:r.s.state}))}]};
+V.reports=()=>`<div class="top"><h2>${t('reports')}</h2><input type="month" id="rm" value="${today().slice(0,7)}" style="width:170px"></div>${Object.entries(REP).map(([k,[l]])=>`<div class="card row" style="justify-content:space-between;margin-top:0"><b>${l}</b><span><button onclick="xl('${k}')">Excel</button> <button onclick="pdf('${k}')">PDF</button></span></div>`).join('')}`;
+window.xl=k=>{const d=REP[k][1]();if(!d.length)return alert('لا توجد بيانات');const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d),'Report');XLSX.writeFile(wb,'SMS_'+k+'_'+today()+'.xlsx')};
+window.pdf=k=>{const d=REP[k][1]();if(!d.length)return alert('لا توجد بيانات');const w=window.open('');w.document.write(`<html dir="rtl"><meta charset="utf-8"><body style="font-family:Tahoma"><h3>${REP[k][0]} — ${today()}</h3><table border=1 cellpadding=4 style="border-collapse:collapse;font-size:12px"><tr>${Object.keys(d[0]).map(h=>'<th>'+h+'</th>').join('')}</tr>${d.map(r=>'<tr>'+Object.values(r).map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')}</table><script>print()<\/script>`);w.document.close()};
+/* users / audit / settings */
+V.users=()=>`<div class="top"><h2>${t('users')}</h2></div><div class="card">${table(['Name','Email','Role'],D.users.map(u=>[esc(u.name),esc(u.email),can('users')?`<select onchange="setRole('${u.id}',this.value)">${ROLES.map(r=>`<option ${u.role===r?'selected':''}>${r}</option>`).join('')}</select>`:u.role]))}</div><p class="muted">Admin: كل الصلاحيات · R&D: المنتجات والدراسات · QC: سحب العينات والنتائج · QA: المراجعة والاعتماد · Viewer: مشاهدة.</p>`;
+window.setRole=async(id,r)=>{const u=D.users.find(x=>x.id===id),o={role:u.role};if(u.id===ME.id&&r!=='Admin'&&!confirm('ستفقد صلاحية Admin. متأكد؟')){draw();return}await dbSet('users',id,{...u,role:r});await audit('role','user',id,o,{role:r});if(u.id===ME.id)ME.role=r;draw()};
+V.audit=()=>`<div class="top"><h2>${t('audit')}</h2><button onclick="xlAudit()">Excel</button></div><div class="card">${table(['Time','User','Action','Entity','Old','New'],[...D.audit].sort((a,b)=>a.ts<b.ts?1:-1).slice(0,300).map(a=>[a.ts.replace('T',' ').slice(0,19),esc(a.user),a.action,esc(a.entity),`<small>${esc(a.old.slice(0,160))}</small>`,`<small>${esc(a.new.slice(0,160))}</small>`]))}</div>`;
+window.xlAudit=()=>{const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.audit),'Audit');XLSX.writeFile(wb,'SMS_audit_'+today()+'.xlsx')};
+V.settings=()=>`<div class="top"><h2>${t('settings')}</h2></div><div class="card f">
+<div><label>تنبيه أصفر قبل (أيام)</label><input id="sy" type="number" value="${settings.y}"></div><div><label>تنبيه برتقالي قبل (أيام)</label><input id="so" type="number" value="${settings.o}"></div>
+<div><label>إشعارات المتصفح</label><select id="sn"><option value="1" ${settings.notify?'selected':''}>مفعلة</option><option value="" ${settings.notify?'':'selected'}>متوقفة</option></select></div>
+<div><label>اللغة / Language</label><select id="sl"><option value="ar" ${LANG==='ar'?'selected':''}>العربية</option><option value="en" ${LANG==='en'?'selected':''}>English</option></select></div></div>
+<button class="p" onclick="saveSet()">${t('save')}</button> <button onclick="backup()">نسخة احتياطية JSON</button> ${can('users')?'<button onclick="$(\'#rf\').click()">استعادة نسخة</button><input id="rf" type="file" accept=".json" hidden onchange="restore(this.files[0])">':''}
+<p class="muted">وضع التخزين: ${FB?'Firebase (مزامنة سحابية)':'Local على هذا الجهاز فقط — أضف إعدادات Firebase في config.js'}</p>`;
+window.saveSet=()=>{settings={y:+$('#sy').value||7,o:+$('#so').value||3,notify:!!$('#sn').value};LANG=$('#sl').value;localStorage.setItem('sms_set',JSON.stringify(settings));localStorage.setItem('sms_lang',LANG);draw()};
+window.backup=()=>{const b=new Blob([JSON.stringify({ts:new Date().toISOString(),data:{products:D.products,studies:D.studies,audit:D.audit}},null,1)]);const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='SMS_backup_'+today()+'.json';a.click()};
+window.restore=async f=>{if(!f||!confirm('الاستعادة تضيف/تحدّث السجلات الموجودة في الملف ولا تحذف شيئاً. متابعة؟'))return;const j=JSON.parse(await f.text());let n=0;for(const c of['products','studies'])for(const o of j.data[c]||[]){await dbSet(c,o.id,o);n++}await audit('restore','backup',f.name,null,{records:n});alert('تمت استعادة '+n+' سجل');draw()};
+/* ---------- Excel / CSV import ---------- */
+const IMPORT_BTN=()=>can('study')?`<button onclick="$('#xf').click()">Import Excel/CSV</button><input id="xf" type="file" accept=".xlsx,.xls,.csv" hidden onchange="startImport(this.files[0])">`:'';
+const GUESS={product:/product|name|منتج|اسم/i,form:/form|شكل/i,pack:/pack|volume|عبوة|حجم/i,batch:/batch|lot|تشغيل/i,api:/active|api|فعال/i,holder:/license|holder|ترخيص/i,mfr:/manufact|مصنع/i,reason:/reason|سبب/i,mfgDate:/mfg|manufacturing|تصنيع/i,expDate:/exp|انتهاء/i,startDate:/incub|start|بداية|حضانة/i,protocol:/protocol|بروتوكول/i,notes:/note|ملاحظ/i,points:/point|interval|نقاط|schedule/i};
+function toDate(v){if(v==null||v==='')return'';if(v instanceof Date)return iso(v);const s=String(v).trim();let m;if(m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');if(m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/))return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');return null}
+window.startImport=async f=>{if(!f)return;const wb=XLSX.read(await f.arrayBuffer(),{cellDates:true}),rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});if(!rows.length)return alert('الملف فارغ');
+  const H=Object.keys(rows[0]),map={};[...FIELDS.map(x=>x[0]),'points'].forEach(k=>map[k]=H.find(h=>GUESS[k].test(h))||'');
+  const m=modal(`<h3>مطابقة الأعمدة (${rows.length} صف)</h3><p class="muted">التواريخ بصيغة يوم/شهر/سنة تُفسَّر day-first. راجع المعاينة قبل التأكيد.</p><div class="f">${[...FIELDS.map(x=>x),['points','Sampling points (e.g. 3,6,9,12)']].map(([k,l])=>`<div><label>${l}</label><select data-k="${k}"><option value="">— غير موجود —</option>${H.map(h=>`<option ${map[k]===h?'selected':''}>${esc(h)}</option>`).join('')}</select></div>`).join('')}</div><div class="row"><button id="pv" class="p">معاينة</button><button id="no">${t('cancel')}</button></div><div id="pvo"></div>`);
+  m.querySelector('#no').onclick=()=>m.remove();
+  m.querySelector('#pv').onclick=()=>{const mp={};m.querySelectorAll('select').forEach(s=>mp[s.dataset.k]=s.value);const seen=new Set(D.studies.map(s=>(s.product+'|'+s.batch).toLowerCase())),out=[];
+    rows.forEach((r,i)=>{const o={id:uid(),samples:{},ver:1},err=[];[...FIELDS.map(x=>x[0])].forEach(k=>{let v=mp[k]?r[mp[k]]:'';if(['mfgDate','expDate','startDate'].includes(k)){const d=toDate(v);if(d===null)err.push(k+' تاريخ غير صالح');v=d||''}o[k]=String(v).trim()});
+      o.points=mp.points?parsePoints(r[mp.points]):null;REQ.forEach(k=>{if(!o[k])err.push('ناقص: '+k)});if(!o.points)err.push('نقاط الجدول غير محددة — لن تُولَّد مواعيد حتى تُحدد يدوياً');
+      const key=(o.product+'|'+o.batch).toLowerCase(),dup=seen.has(key);seen.add(key);out.push({o,err,dup,i:i+2})});
+    const okN=out.filter(x=>!x.dup&&!x.err.some(e=>!e.startsWith('نقاط'))).length;
+    m.querySelector('#pvo').innerHTML=`<p><b>${okN}</b> قابل للاستيراد · ${out.filter(x=>x.dup).length} مكرر · ${out.filter(x=>x.err.some(e=>!e.startsWith('نقاط'))).length} به أخطاء</p>${table(['Row','Product','Batch','Start','Points','ملاحظات'],out.map(x=>[x.i,esc(x.o.product),esc(x.o.batch),x.o.startDate,x.o.points?x.o.points.join(','):'—',(x.dup?'<span class="bad">مكرر — يُتخطى</span> ':'')+x.err.map(e=>'<span class="bad">'+e+'</span>').join('، ')]))}<div class="row"><button class="p" id="go">استيراد ${okN} سجل</button></div>`;
+    m.querySelector('#go').onclick=async()=>{let n=0;for(const x of out){if(x.dup||x.err.some(e=>!e.startsWith('نقاط')))continue;if(!x.o.points)delete x.o.points;await dbSet('studies',x.o.id,x.o);await audit('import','study',x.o.id,null,x.o);n++}m.remove();alert('تم استيراد '+n+' دراسة. لم يتم حذف أو استبدال أي بيانات.');draw()}}};
+/* ---------- shell ---------- */
+function loginView(){
+  $('#root').innerHTML=`<div id="login" class="card"><h2>Stability Management System</h2><p class="muted">Arab Caps${FB?'':' — وضع Local'}</p><div id="nm" hidden><label>الاسم</label><input id="ln"></div><label>Email</label><input id="le" type="email"><label>Password</label><input id="lp" type="password"><p class="bad" id="le2"></p><div class="row"><button class="p" id="bl">دخول</button><button id="bs">حساب جديد</button></div><p class="muted">أول حساب يتم إنشاؤه يكون Admin، والباقي Viewer حتى يغيّر الـ Admin الدور.</p></div>`;
+  const run=async f=>{try{await f();await postLogin()}catch(e){$('#le2').textContent=e.message}};
+  $('#bl').onclick=()=>run(()=>login($('#le').value.trim(),$('#lp').value));
+  $('#bs').onclick=()=>{if($('#nm').hidden){$('#nm').hidden=false;return}if($('#lp').value.length<8)return $('#le2').textContent='كلمة المرور 8 أحرف على الأقل';run(()=>signup($('#ln').value.trim(),$('#le').value.trim(),$('#lp').value))};
+}
+async function postLogin(){draw();notifyCheck()}
+function draw(){
+  document.documentElement.lang=LANG;document.documentElement.dir=LANG==='ar'?'rtl':'ltr';
+  if(!ME)return loginView();
+  $('#root').innerHTML=`<div id="app"><nav><h1>Stability Mgmt<br><small>${esc(ME.name)} · ${ME.role}</small></h1>${nav.map(n=>`<a class="${n===VIEW?'on':''}" onclick="VIEW='${n}';draw()">${t(n)}</a>`).join('')}<a onclick="logout()">${t('logout')}</a></nav><main>${VIEW==='studies'?`<div class="noprint" style="text-align:end">${IMPORT_BTN()}</div>`:''}${V[VIEW]()}</main></div>`;
+  const q=document.querySelector('main input[placeholder]');if(q&&FILTER){q.focus();q.setSelectionRange(FILTER.length,FILTER.length)}
+}
+(async()=>{
+  if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+  try{await initBackend()}catch(e){document.body.innerHTML='<p style="padding:20px">'+esc(e.message)+'</p>';return}
+  listen();
+  if(FB){FB.auth.onAuthStateChanged(async u=>{if(!u){ME=null;draw();return}const d=await FB.db.collection('users').doc(u.uid).get();if(d.exists){ME=d.data();draw();notifyCheck()}})}
+  else{const id=sessionStorage.getItem('sms_me');ME=D.users.find(u=>u.id===id)||null;draw();if(ME)notifyCheck()}
+  setInterval(()=>{if(ME){draw();notifyCheck()}},3600e3);
+})();
+</script></body></html>
