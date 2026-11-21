@@ -44,7 +44,7 @@ const t=k=>(T[k]||[k,k])[LANG==='ar'?0:1];
 /* ---------- constants ---------- */
 const FIELDS=[['product','Product Name / Concentration'],['form','Dosage Form'],['pack','Volume / Pack'],['batch','Batch Number'],['api','Active Ingredient'],['holder','License Holder'],['mfr','Manufacturer'],['reason','Study Reason'],['mfgDate','Manufacturing Date','date'],['expDate','Expiry Date','date'],['startDate','Incubation / Study Start Date','date'],['protocol','Study Protocol'],['notes','Notes']];
 const REQ=['product','batch','startDate','protocol'];
-const ROLES=['Admin','R&D','QC','QA','Viewer'];
+const ROLES=['Admin','R&D','QC','QA','Viewer','Pending'];
 const STATES=['Scheduled','Due','Overdue','Sampled','Under Testing','Reviewed','Approved'];
 const CAN={study:['Admin','R&D'],sample:['Admin','QC'],review:['Admin','QA'],users:['Admin'],del:['Admin']};
 /* ---------- data layer ---------- */
@@ -76,15 +76,16 @@ function listen(){
 /* ---------- auth ---------- */
 const hash=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
 async function signup(name,email,pass){
-  if(FB){const c=await FB.auth.createUserWithEmailAndPassword(email,pass);const first=(await FB.db.collection('users').limit(1).get()).empty;
-    const u={id:c.user.uid,name,email,role:first?'Admin':'Viewer'};await dbSet('users',u.id,u);ME=u;await audit('create','user',u.id,null,{name,email,role:u.role});return}
+  if(FB){const c=await FB.auth.createUserWithEmailAndPassword(email,pass);
+    const u={id:c.user.uid,name,email,role:'Pending'};await dbSet('users',u.id,u);ME=u;await audit('signup','user',u.id,null,{name,email,role:u.role});return}
   if(D.users.some(u=>u.email===email))throw new Error('الإيميل مسجل');
-  const u={id:uid(),name,email,pass:await hash(pass),role:D.users.length?'Viewer':'Admin'};await dbSet('users',u.id,u);ME=u;sessionStorage.setItem('sms_me',u.id);await audit('create','user',u.id,null,{name,email,role:u.role});
+  const u={id:uid(),name,email,pass:await hash(pass),role:D.users.length?'Pending':'Admin'};await dbSet('users',u.id,u);ME=u;sessionStorage.setItem('sms_me',u.id);await audit('signup','user',u.id,null,{name,email,role:u.role});
 }
 async function login(email,pass){
-  if(FB){const c=await FB.auth.signInWithEmailAndPassword(email,pass);await new Promise(r=>setTimeout(r,800));ME=D.users.find(u=>u.id===c.user.uid)||(await FB.db.collection('users').doc(c.user.uid).get()).data();if(!ME)throw new Error('لا يوجد ملف مستخدم');if(ME.disabled){await FB.auth.signOut();ME=null;throw new Error('الحساب معطّل. تواصل مع الـ Admin')}return}
+  if(FB){const c=await FB.auth.signInWithEmailAndPassword(email,pass);await new Promise(r=>setTimeout(r,800));const g=await FB.db.collection('users').doc(c.user.uid).get();ME=g.exists?g.data():null;if(!ME){ME={id:c.user.uid,name:email.split('@')[0],email,role:'Pending'};await dbSet('users',ME.id,ME);await audit('signup','user',ME.id,null,{email,role:'Pending'})}if(ME.disabled){await FB.auth.signOut();ME=null;throw new Error('الحساب معطّل. تواصل مع الـ Admin')}return}
   const h=await hash(pass),u=D.users.find(u=>u.email===email&&u.pass===h);if(!u)throw new Error('بيانات الدخول غير صحيحة');if(u.disabled)throw new Error('الحساب معطّل');ME=u;sessionStorage.setItem('sms_me',u.id);
 }
+window.chkActive=async()=>{try{const g=FB?(await FB.db.collection('users').doc(ME.id).get()).data():D.users.find(u=>u.id===ME.id);if(g&&g.role!=='Pending'){location.reload()}else alert('لسه بانتظار التفعيل')}catch(e){alert('تعذر التحديث: '+e.message)}};
 async function logout(){if(FB)await FB.auth.signOut();sessionStorage.removeItem('sms_me');ME=null;draw()}
 /* ---------- schedule engine ---------- */
 function parsePoints(s){const a=String(s||'').split(/[,،;\s]+/).map(x=>x.replace(/m$/i,'').trim()).filter(Boolean).map(Number);return a.length&&a.every(n=>n>=0&&isFinite(n))?[...new Set(a)].sort((x,y)=>x-y):null}
@@ -116,14 +117,32 @@ function table(h,rows){return rows.length?`<div class="tw"><table><tr>${h.map(x=
 function fieldHtml([k,l,ty],v){return `<div><label>${l}${REQ.includes(k)?' *':''}</label>${k==='notes'||k==='protocol'?`<textarea name="${k}" rows="2">${esc(v)}</textarea>`:`<input name="${k}" type="${ty||'text'}" value="${esc(v)}">`}</div>`}
 /* ---------- views ---------- */
 const V={};
+let SFILTER='';
+const PRED={overdue:r=>r.s.state==='Overdue',due:r=>r.s.state==='Due',d7:r=>r.s.days!=null&&r.s.days>=0&&r.s.days<=7,d30:r=>r.s.days!=null&&r.s.days>=0&&r.s.days<=30,testing:r=>r.s.state==='Under Testing',pending:r=>['Sampled','Under Testing'].includes(r.s.state)&&(!r.rec.conf||r.rec.conf==='Pending'),review:r=>(r.s.state==='Under Testing'&&['Conforms','OOS'].includes(r.rec.conf))||r.s.state==='Reviewed',oos:r=>r.rec.conf==='OOS'};
+window.go=(v,f={})=>{VIEW=v;FILTER='';FSTATUS=f.status||'';FTYPE='';FCOND='';FYEAR='';SFILTER=f.s||'';draw();scrollTo(0,0)};
+const bars=(items)=>{const mx=Math.max(1,...items.map(i=>i[1]));return items.map(([l,v,c])=>`<div style="display:flex;align-items:center;gap:8px;margin:5px 0"><span style="width:104px;font-size:13px;flex-shrink:0">${esc(l)}</span><div style="flex:1;background:#eef2f4;border-radius:4px"><div style="width:${Math.round(v/mx*100)}%;min-width:${v?3:0}px;background:${c||'var(--pri)'};height:18px;border-radius:4px"></div></div><b style="width:30px;text-align:end">${v}</b></div>`).join('')};
 V.dashboard=()=>{
-  const R=allRows(),c=x=>R.filter(r=>r.s.cls===x).length,mk=(l,n,col)=>`<div class="kpi" style="--c:var(${col})"><b>${n}</b>${l}</div>`;
+  const R=allRows(),S=D.studies.filter(s=>!s.archived),L=(a,e)=>LANG==='ar'?a:e,st=s=>s.status||'Active',n=k=>R.filter(PRED[k]).length;
+  const mk=(l,v,col,act)=>`<div class="kpi" style="--c:var(${col});${act?'cursor:pointer':'opacity:.5'}"${act?` onclick="${act}"`:''}><b>${v}</b>${l}</div>`;
+  const H=x=>`<h4 style="margin:16px 0 6px;color:var(--mut)">${x}</h4>`,sc=k=>`go('schedule',{s:'${k}'})`;
   const al=R.filter(r=>['c-dr','c-r','c-o','c-y'].includes(r.s.cls)).sort((a,b)=>a.due<b.due?-1:1);
-  return `<div class="top"><h2>${t('dashboard')}</h2></div><div class="grid">${mk('Studies',D.studies.length,'--pri')+mk('Overdue',c('c-dr'),'--dr')+mk('Due today',c('c-r'),'--r')+mk('≤'+settings.o+' days',c('c-o'),'--o')+mk('≤'+settings.y+' days',c('c-y'),'--y')+mk('Later',c('c-g'),'--g')+mk('Sampled+',c('c-dg'),'--dg')}</div>
-  <div class="card"><b>Alerts</b>${table(['Product','Batch','Point','Due','Status'],al.map(r=>[esc(r.st.product),esc(r.st.batch),r.m+'M',r.due,tag(r)]))}</div>
-  ${D.studies.filter(s=>!s.points).length?`<div class="warn">يوجد ${D.studies.filter(s=>!s.points).length} دراسة بدون نقاط بروتوكول — لم يتم توليد مواعيد لها.</div>`:''}
+  const now=new Date(),months=[0,1,2,3,4,5].map(i=>iso(new Date(now.getFullYear(),now.getMonth()+i,1)).slice(0,7));
+  const open=R.filter(r=>['c-g','c-y','c-o','c-r'].includes(r.s.cls)),types={};S.forEach(s=>{const k=s.studyType||L('غير محدد','n/a');types[k]=(types[k]||0)+1});
+  const sc2={Overdue:'var(--dr)',Due:'var(--r)',Scheduled:'var(--g)',Sampled:'var(--dg)','Under Testing':'var(--o)',Reviewed:'#2f80ed',Approved:'var(--dg)'};
+  return `<div class="top"><h2>${t('dashboard')}</h2></div>
+  ${H(L('الدراسات','Studies'))}<div class="grid">${mk(L('إجمالي الدراسات','Total studies'),S.length,'--pri',"go('studies')")+mk(L('نشطة','Active'),S.filter(s=>st(s)==='Active').length,'--g',"go('studies',{status:'Active'})")+mk(L('موقوفة','Suspended'),S.filter(s=>st(s)==='Suspended').length,'--o',"go('studies',{status:'Suspended'})")+mk(L('منتهية','Closed'),S.filter(s=>st(s)==='Closed').length,'--dg',"go('studies',{status:'Closed'})")+mk(L('دراسات متأخرة','Overdue studies'),new Set(R.filter(PRED.overdue).map(r=>r.st.id)).size,'--dr',sc('overdue'))}</div>
+  ${H(L('نقاط السحب والعينات','Sampling & samples'))}<div class="grid">${mk(L('سحب متأخر','Overdue'),n('overdue'),'--dr',sc('overdue'))+mk(L('سحب اليوم','Due today'),n('due'),'--r',sc('due'))+mk(L('خلال 7 أيام','Next 7 days'),n('d7'),'--y',sc('d7'))+mk(L('خلال 30 يوم','Next 30 days'),n('d30'),'--g',sc('d30'))+mk(L('تحت التحليل','Under testing'),n('testing'),'--o',sc('testing'))+mk(L('نتائج Pending','Pending results'),n('pending'),'--y',sc('pending'))+mk(L('تحتاج مراجعة/اعتماد','Need review/approval'),n('review'),'--pri',sc('review'))+mk(L('نتائج OOS','OOS results'),n('oos'),'--dr',sc('oos'))}</div>
+  ${H(L('البيانات الأساسية','Master data'))}<div class="grid">${mk(L('بروتوكولات تنتظر الاعتماد','Protocols awaiting approval'),D.protocols.filter(p=>p.status==='Draft').length,'--o',"go('protocols')")+mk(L('منتجات نشطة','Active products'),D.products.filter(p=>p.status!=='Inactive').length,'--pri',"go('products')")+mk(L('ظروف تخزين نشطة','Active conditions'),D.conditions.filter(c=>c.status!=='Inactive').length,'--pri',"go('conditions')")}</div>
+  ${H(L('قيد التطوير (مراحل قادمة)','Planned (later phases)'))}<div class="grid">${[['OOT',5],['Investigations',5],['CAPA',5],['Deviations',5],['Chambers available',8],['Chambers out of service',8]].map(([l,p])=>mk(l+' · P'+p,'—','--mut','')).join('')}</div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+   <div class="card"><b>${L('حالات العينات','Sample states')}</b>${bars(Object.keys(sc2).map(k=>[k,R.filter(r=>r.s.state===k).length,sc2[k]]))}</div>
+   <div class="card"><b>${L('سحب قادم لكل شهر','Upcoming per month')}</b>${bars([[L('متأخر','Overdue'),n('overdue'),'var(--dr)'],...months.map(m=>[m,open.filter(r=>r.due.startsWith(m)).length,'var(--pri)'])])}</div>
+   <div class="card"><b>${L('الدراسات حسب النوع','Studies by type')}</b>${Object.keys(types).length?bars(Object.entries(types).map(([k,v])=>[k,v])):`<p class="muted">${t('none')}</p>`}</div></div>
+  <div class="card"><b>${L('تنبيهات المواعيد','Sampling alerts')}</b> <button onclick="go('schedule')" style="float:inline-end">${L('عرض الكل','View all')}</button>${table(['Study','Product','Batch','Point','Due','Status'],al.slice(0,10).map(r=>[esc(r.st.studyNo||'—'),esc(r.st.product),esc(r.st.batch),r.m+'M',r.due,tag(r)]))}</div>
+  ${D.studies.filter(s=>!s.archived&&!s.points).length?`<div class="warn">يوجد ${D.studies.filter(s=>!s.archived&&!s.points).length} دراسة بدون نقاط بروتوكول — لم يتم توليد مواعيد لها.</div>`:''}
   ${'Notification' in window&&Notification.permission!=='granted'?'<button onclick="Notification.requestPermission().then(()=>{notifyCheck();draw()})">تفعيل الإشعارات على هذا الجهاز</button>':''}`;
 };
+
 /* ---------- Phase 2: master data ---------- */
 const DEF_TYPES=['Long-Term','Accelerated','Intermediate','Ongoing','Commitment','In-Use','Photostability','Raw Material'];
 const getTypes=()=>{const l=D.settings.find(x=>x.id==='lists');return l&&l.studyTypes&&l.studyTypes.length?l.studyTypes:DEF_TYPES};
@@ -238,8 +257,8 @@ window.studyForm=id=>{
     const cur=D.studies.find(x=>x.id===n.id);if(cur&&(cur.ver||0)!==(s.ver||0))return alert('تم تعديل هذه الدراسة من مستخدم آخر أثناء فتحها. أغلق وأعد الفتح.');
     n.ver=(s.ver||0)+1;n.locked=!!s.locked;delete n.samples;const a=mkAudit(s.id?'update':'create','study',n.id,s.id?s:null,n);n.lastAudit=a.id;
     try{await commit([['audit',a.id,a],['studies',n.id,n]])}catch(e){return alert('فشل الحفظ: '+e.message)}m.remove();draw()}};
-V.schedule=()=>{const R=allRows().sort((a,b)=>a.due<b.due?-1:1);
-  return `<div class="top"><h2>${t('schedule')}</h2></div><div class="card">${table(['Due','Point','Product','Batch','Status','State',''],R.map(r=>[r.due,r.m+'M',esc(r.st.product),esc(r.st.batch),tag(r),esc(r.rec.state||'—'),(can('sample')||can('review'))?`<button onclick="sampleForm('${r.st.id}',${r.m})">فتح</button>`:'']))}</div>`};
+V.schedule=()=>{const f=PRED[SFILTER],R=allRows().filter(r=>!f||f(r)).sort((a,b)=>a.due<b.due?-1:1);
+  return `<div class="top"><h2>${t('schedule')}</h2>${SFILTER?`<button onclick="go('schedule')">فلتر: ${SFILTER} ✕</button>`:''}</div><div class="card">${table(['Due','Study','Point','Product','Batch','Status','State',''],R.map(r=>[r.due,esc(r.st.studyNo||'—'),r.m+'M',esc(r.st.product),esc(r.st.batch),tag(r),esc(r.rec.state||'—'),(can('sample')||can('review'))?`<button onclick="sampleForm('${r.st.id}',${r.m})">فتح</button>`:'']))}</div>`};
 window.sampleForm=(sid,mo)=>{
   const st=D.studies.find(x=>x.id===sid),key=String(mo),id=sid+'_'+key,rec={...(SMAP[id]||{})},prev=rec.state,lock=prev==='Approved',due=addM(st.startDate,mo);
   const opts=[...(can('sample')&&(!prev||['Sampled','Under Testing'].includes(prev))?['Sampled','Under Testing']:[]),...(can('review')&&['Under Testing','Reviewed'].includes(prev)?['Reviewed',...(rec.sUid===ME.id?[]:['Approved'])]:[])];
@@ -268,7 +287,7 @@ window.sampleForm=(sid,mo)=>{
 const esign=meaning=>new Promise(res=>{const m=modal(`<h3>توقيع إلكتروني — ${meaning}</h3><p class="muted">التوقيع باسم ${esc(ME.name)} (${ME.role}). أدخل كلمة المرور للتأكيد.</p><input type="password" id="sp" autocomplete="current-password"><p class="bad" id="se"></p><div class="row"><button class="p" id="sy2">وقّع</button><button id="sn2">${t('cancel')}</button></div>`);
   m.querySelector('#sn2').onclick=()=>{m.remove();res(null)};
   m.querySelector('#sy2').onclick=async()=>{try{const p=m.querySelector('#sp').value;if(FB){await FB.auth.currentUser.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(ME.email,p));await FB.auth.currentUser.getIdToken(true)}else if(await hash(p)!==ME.pass)throw new Error('كلمة المرور غير صحيحة');m.remove();res({uid:ME.id,name:ME.name,role:ME.role,meaning,ts:FB?firebase.firestore.FieldValue.serverTimestamp():new Date().toISOString()})}catch(e){m.querySelector('#se').textContent='فشل التوقيع: '+e.message}}});
-V.results=()=>{const R=allRows().filter(r=>r.rec.results||r.rec.conf);return `<div class="top"><h2>${t('results')}</h2></div><div class="card">${table(['Product','Batch','Point','Sampled','By','Sample #','Conformity','State','Results'],R.map(r=>[esc(r.st.product),esc(r.st.batch),r.m+'M',r.rec.actualDate||'',esc(r.rec.by),esc(r.rec.sampleNo),`<b class="${r.rec.conf==='OOS'?'bad':''}">${esc(r.rec.conf)}</b>`,r.s.state,esc(r.rec.results)]))}</div>`};
+V.results=()=>{const R=allRows().filter(r=>(r.rec.results||r.rec.conf)&&(!PRED[SFILTER]||PRED[SFILTER](r)));return `<div class="top"><h2>${t('results')}</h2></div><div class="card">${table(['Product','Batch','Point','Sampled','By','Sample #','Conformity','State','Results'],R.map(r=>[esc(r.st.product),esc(r.st.batch),r.m+'M',r.rec.actualDate||'',esc(r.rec.by),esc(r.rec.sampleNo),`<b class="${r.rec.conf==='OOS'?'bad':''}">${esc(r.rec.conf)}</b>`,r.s.state,esc(r.rec.results)]))}</div>`};
 /* reports */
 const REP={
  studies:['الدراسات الحالية',()=>D.studies.map(s=>({Product:s.product,Form:s.form,Pack:s.pack,Batch:s.batch,API:s.api,Holder:s.holder,Manufacturer:s.mfr,Reason:s.reason,Mfg:s.mfgDate,Exp:s.expDate,Start:s.startDate,Protocol:s.protocol,Points:(s.points||[]).join(',')}))],
@@ -280,9 +299,9 @@ const REP={
  monthly:['تقرير شهري بالمواعيد',()=>{const mo=document.getElementById('rm')?.value||today().slice(0,7);return allRows().filter(r=>r.due.startsWith(mo)).sort((a,b)=>a.due<b.due?-1:1).map(r=>({Due:r.due,Product:r.st.product,Batch:r.st.batch,Point:r.m+'M',Status:r.s.state}))}]};
 V.reports=()=>`<div class="top"><h2>${t('reports')}</h2><input type="month" id="rm" value="${today().slice(0,7)}" style="width:170px"></div>${Object.entries(REP).map(([k,[l]])=>`<div class="card row" style="justify-content:space-between;margin-top:0"><b>${l}</b><span><button onclick="xl('${k}')">Excel</button> <button onclick="pdf('${k}')">PDF</button></span></div>`).join('')}`;
 window.xl=k=>{const d=REP[k][1]();if(!d.length)return alert('لا توجد بيانات');const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(d),'Report');XLSX.writeFile(wb,'SMS_'+k+'_'+today()+'.xlsx')};
-window.pdf=k=>{const d=REP[k][1]();if(!d.length)return alert('لا توجد بيانات');const w=window.open('');w.document.write(`<html dir="rtl"><meta charset="utf-8"><body style="font-family:Tahoma"><h3>${REP[k][0]} — ${today()}</h3><table border=1 cellpadding=4 style="border-collapse:collapse;font-size:12px"><tr>${Object.keys(d[0]).map(h=>'<th>'+h+'</th>').join('')}</tr>${d.map(r=>'<tr>'+Object.values(r).map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')}</table><script>print()<\/script>`);w.document.close()};
+window.pdf=k=>{const d=REP[k][1]();if(!d.length)return alert('لا توجد بيانات');const w=window.open('');w.document.write(`<html dir="rtl"><meta charset="utf-8"><body style="font-family:Tahoma">${pdfHead()}<h3>${REP[k][0]} — ${today()}</h3><table border=1 cellpadding=4 style="border-collapse:collapse;font-size:12px"><tr>${Object.keys(d[0]).map(h=>'<th>'+h+'</th>').join('')}</tr>${d.map(r=>'<tr>'+Object.values(r).map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')}</table><script>print()<\/script>`);w.document.close()};
 /* users / audit / settings */
-V.users=()=>`<div class="top"><h2>${t('users')}</h2></div><div class="card">${table(['Name','Email','Role','Status',''],D.users.map(u=>[esc(u.name),esc(u.email),can('users')&&u.id!==ME.id?`<select onchange="setRole('${u.id}',this.value)">${ROLES.map(r=>`<option ${u.role===r?'selected':''}>${r}</option>`).join('')}</select>`:u.role,u.disabled?'<span class="bad">معطّل</span>':'<span class="ok">نشط</span>',can('users')&&u.id!==ME.id?`<button class="${u.disabled?'':'d'}" onclick="toggleUser('${u.id}')">${u.disabled?'تفعيل':'تعطيل'}</button>`:'']))}</div><p class="muted">Admin: كل الصلاحيات · R&D: المنتجات والدراسات · QC: سحب العينات والنتائج · QA: المراجعة والاعتماد · Viewer: مشاهدة.</p>`;
+V.users=()=>`<div class="top"><h2>${t('users')}</h2></div><div class="card">${table(['Name','Email','Role','Status',''],D.users.map(u=>[esc(u.name),esc(u.email),can('users')&&u.id!==ME.id?`<select onchange="setRole('${u.id}',this.value)">${ROLES.map(r=>`<option ${u.role===r?'selected':''}>${r}</option>`).join('')}</select>`:u.role,u.disabled?'<span class="bad">معطّل</span>':u.role==='Pending'?'<span class="bad">بانتظار التفعيل</span>':'<span class="ok">نشط</span>',can('users')&&u.id!==ME.id?`<button class="${u.disabled?'':'d'}" onclick="toggleUser('${u.id}')">${u.disabled?'تفعيل':'تعطيل'}</button>`:'']))}</div><p class="muted">Admin: كل الصلاحيات · R&D: المنتجات والدراسات · QC: سحب العينات والنتائج · QA: المراجعة والاعتماد · Viewer: مشاهدة.</p>`;
 window.setRole=async(id,r)=>{const u=D.users.find(x=>x.id===id);if(id===ME.id)return;const a=mkAudit('role','user',id,{role:u.role},{role:r});try{await commit([['audit',a.id,a],['users',id,{...u,role:r,lastAudit:a.id}]])}catch(e){alert('فشل: '+e.message)}draw()};
 window.toggleUser=async id=>{if(!can('users')||id===ME.id)return;const u=D.users.find(x=>x.id===id),nd=!u.disabled;if(!confirm((nd?'تعطيل ':'تفعيل ')+u.name+'؟'))return;const a=mkAudit(nd?'disable':'enable','user',id,{disabled:!!u.disabled},{disabled:nd});try{await commit([['audit',a.id,a],['users',id,{...u,disabled:nd,lastAudit:a.id}]])}catch(e){alert('فشل: '+e.message)}draw()};
 V.audit=()=>`<div class="top"><h2>${t('audit')}</h2><button onclick="xlAudit()">Excel</button></div><div class="card">${table(['Time','User','Action','Entity','Old','New'],[...D.audit].sort((a,b)=>(a.ts||'')<(b.ts||'')?1:-1).slice(0,300).map(a=>[(a.ts||'').replace('T',' ').slice(0,19),esc(a.user),a.action,esc(a.entity),`<small>${esc(a.old.slice(0,160))}</small>`,`<small>${esc(a.new.slice(0,160))}</small>`]))}</div>`;
@@ -293,9 +312,28 @@ V.settings=()=>`<div class="top"><h2>${t('settings')}</h2></div><div class="card
 <div><label>اللغة / Language</label><select id="sl"><option value="ar" ${LANG==='ar'?'selected':''}>العربية</option><option value="en" ${LANG==='en'?'selected':''}>English</option></select></div></div>
 <button class="p" onclick="saveSet()">${t('save')}</button> <button onclick="backup()">نسخة احتياطية JSON</button> 
 ${can('users')?`<div class="card" style="margin-top:12px"><b>أنواع الدراسات</b><p>${getTypes().map(esc).join(' · ')}</p><div class="row"><input id="nt" placeholder="نوع جديد" style="max-width:220px"><button onclick="addType()">إضافة</button></div></div>`:''}
+${can('users')?`<div class="card" style="margin-top:12px"><b>بيانات الشركة</b><div class="f"><div><label>اسم الشركة</label><input id="cn" value="${esc(company().name||CO.name||'')}"></div><div><label>المصنع / الموقع</label><input id="cp" value="${esc(company().plant)}"></div><div><label>عنوان التقارير</label><input id="ch" value="${esc(company().reportHeader)}"></div><div><label>الشعار (صورة)</label><input id="clogo" type="file" accept="image/*"></div></div><div class="row"><button class="p" onclick="saveCompany()">حفظ بيانات الشركة</button></div></div><div class="card"><b>فحص الإعداد</b> <button onclick="runDiag()">تشغيل الفحص</button><div id="diag"></div></div>`:''}
 <p class="muted">وضع التخزين: ${FB?'Firebase (مزامنة سحابية)':'Local على هذا الجهاز فقط — أضف إعدادات Firebase في config.js'}</p>`;
 window.saveSet=()=>{settings={y:+$('#sy').value||7,o:+$('#so').value||3,notify:!!$('#sn').value};LANG=$('#sl').value;localStorage.setItem('sms_set',JSON.stringify(settings));localStorage.setItem('sms_lang',LANG);draw()};
 window.backup=()=>{const b=new Blob([JSON.stringify({ts:new Date().toISOString(),data:{products:D.products,conditions:D.conditions,protocols:D.protocols,studies:D.studies,samples:D.samples,settings:D.settings,audit:D.audit}},null,1)]);const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='SMS_backup_'+today()+'.json';a.click()};
+/* ---------- company identity & setup diagnostics ---------- */
+const CO=window.COMPANY||{},company=()=>D.settings.find(x=>x.id==='company')||{},coName=()=>company().name||CO.name||'';
+const pdfHead=()=>{const c=company();return `<div style="display:flex;align-items:center;gap:10px;border-bottom:1px solid #999;padding-bottom:6px;margin-bottom:8px">${c.logo?`<img src="${c.logo}" style="height:42px">`:''}<div><b>${esc(coName())}</b> ${esc(c.plant||'')}<br><small>${esc(c.reportHeader||'')}</small></div></div>`};
+const shrink=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const k=Math.min(1,220/im.width),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);let u=c.toDataURL('image/png');if(u.length>200000)u=c.toDataURL('image/jpeg',.7);res(u)};im.onerror=()=>rej(new Error('صورة غير صالحة'));im.src=r.result};r.readAsDataURL(f)});
+window.saveCompany=async()=>{const old=D.settings.find(x=>x.id==='company');let logo=old&&old.logo||'';const f=$('#clogo').files[0];try{if(f)logo=await shrink(f);await saveDoc('settings',{...(old||{}),id:'company',name:$('#cn').value.trim(),plant:$('#cp').value.trim(),reportHeader:$('#ch').value.trim(),logo},old||null,'company')}catch(e){return alert('فشل: '+e.message)}draw()};
+window.runDiag=async()=>{const out=[],ok=(l,v,fix)=>out.push([l,v,fix||'']);
+  ok('Firebase متصل (مش وضع Local)',!!FB,'ضع إعدادات مشروعك في config.js');
+  if(FB){try{await FB.db.collection('users').doc(ME.id).get();ok('Firestore يستجيب',true)}catch(e){ok('Firestore يستجيب',false,e.message)}
+    try{await FB.db.collection('_probe').doc('x').set({t:1});ok('قواعد الأمان تمنع الكتابة العشوائية',false,'القواعد مفتوحة! الصق firestore.rules وانشر فوراً');try{await FB.db.collection('_probe').doc('x').delete()}catch(_){}}catch(e){ok('قواعد الأمان تمنع الكتابة العشوائية',/permission/i.test(e.message),e.message)}}
+  ok('يوجد Admin نشط',D.users.some(u=>u.role==='Admin'&&!u.disabled),'رقّي مستخدم لـ Admin من لوحة Firebase');
+  ok('اسم الشركة مضبوط',!!coName(),'ضعه في config.js أو من الإعدادات');
+  ok('الموقع على HTTPS',location.protocol==='https:'||location.hostname==='localhost','الإشعارات والتثبيت يحتاجون HTTPS');
+  ok('Service Worker شغال','serviceWorker' in navigator&&!!navigator.serviceWorker.controller,'حدّث الصفحة مرة وافتحها تاني');
+  ok('مثبّت كتطبيق',matchMedia('(display-mode: standalone)').matches,'اختياري: Install app من قايمة المتصفح');
+  ok('إشعارات المتصفح مفعّلة','Notification' in window&&Notification.permission==='granted','فعّلها من لوحة التحكم');
+  ok('ظروف التخزين موجودة',D.conditions.length>0,'أضفها من قسم ظروف التخزين');
+  const pend=D.users.filter(u=>u.role==='Pending').length;ok('مستخدمين بانتظار التفعيل: '+pend,pend===0,'فعّلهم من المستخدمون والصلاحيات');
+  $('#diag').innerHTML=table(['الفحص','النتيجة','الإجراء'],out.map(([l,v,f])=>[esc(l),v?'<b class="ok">✓</b>':'<b class="bad">✗</b>',v?'':esc(f)]))};
 /* ---------- Excel / CSV import ---------- */
 const IMPORT_BTN=()=>can('study')?`<button onclick="$('#xf').click()">Import Excel/CSV</button><input id="xf" type="file" accept=".xlsx,.xls,.csv" hidden onchange="startImport(this.files[0])">`:'';
 const GUESS={product:/product|name|منتج|اسم/i,form:/form|شكل/i,pack:/pack|volume|عبوة|حجم/i,batch:/batch|lot|تشغيل/i,api:/active|api|فعال/i,holder:/license|holder|ترخيص/i,mfr:/manufact|مصنع/i,reason:/reason|سبب/i,mfgDate:/mfg|manufacturing|تصنيع/i,expDate:/exp|انتهاء/i,startDate:/incub|start|بداية|حضانة/i,protocol:/protocol|بروتوكول/i,notes:/note|ملاحظ/i,points:/point|interval|نقاط|schedule/i};
@@ -313,16 +351,17 @@ window.startImport=async f=>{if(!f)return;const wb=XLSX.read(await f.arrayBuffer
     m.querySelector('#go').onclick=async()=>{let n=0;for(const x of out){if(x.dup||x.err.some(e=>!e.startsWith('نقاط')))continue;if(!x.o.points)delete x.o.points;x.o.locked=false;const a=mkAudit('import','study',x.o.id,null,x.o);x.o.lastAudit=a.id;try{await commit([['audit',a.id,a],['studies',x.o.id,x.o]]);n++}catch(e){console.error(e)}}m.remove();alert('تم استيراد '+n+' دراسة. لم يتم حذف أو استبدال أي بيانات.');draw()}}};
 /* ---------- shell ---------- */
 function loginView(){
-  $('#root').innerHTML=`<div id="login" class="card"><h2>Stability Management System</h2><p class="muted">Arab Caps${FB?'':' — وضع Local'}</p><div id="nm" hidden><label>الاسم</label><input id="ln"></div><label>Email</label><input id="le" type="email"><label>Password</label><input id="lp" type="password"><p class="bad" id="le2"></p><div class="row"><button class="p" id="bl">دخول</button><button id="bs">حساب جديد</button></div><p class="muted">أول حساب يتم إنشاؤه يكون Admin، والباقي Viewer حتى يغيّر الـ Admin الدور.</p></div>`;
+  $('#root').innerHTML=`<div id="login" class="card"><h2>Stability Management System</h2><h3 style="margin:0 0 4px">${esc(CO.name||'')}</h3><p class="muted">${FB?esc(window.FIREBASE_CONFIG.projectId):'وضع Local — غير متصل بقاعدة بيانات'}</p><div id="nm" hidden><label>الاسم</label><input id="ln"></div><label>Email</label><input id="le" type="email"><label>Password</label><input id="lp" type="password"><p class="bad" id="le2"></p><div class="row"><button class="p" id="bl">دخول</button><button id="bs">حساب جديد</button></div><p class="muted">الحسابات الجديدة بتحتاج تفعيل من الـ Admin قبل ما تقدر تدخل على البيانات.</p></div>`;
   const run=async f=>{try{await f();await postLogin()}catch(e){$('#le2').textContent=e.message}};
   $('#bl').onclick=()=>run(()=>login($('#le').value.trim(),$('#lp').value));
   $('#bs').onclick=()=>{if($('#nm').hidden){$('#nm').hidden=false;return}if(!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}$/.test($('#lp').value))return $('#le2').textContent='كلمة المرور: 12 حرف على الأقل، حروف كبيرة وصغيرة ورقم ورمز';run(()=>signup($('#ln').value.trim(),$('#le').value.trim(),$('#lp').value))};
 }
 async function postLogin(){draw();notifyCheck()}
 function draw(){
-  SMAP={};D.samples.forEach(x=>SMAP[x.id]=x);document.documentElement.lang=LANG;document.documentElement.dir=LANG==='ar'?'rtl':'ltr';
+  SMAP={};D.samples.forEach(x=>SMAP[x.id]=x);document.title=(ME&&coName()?coName()+' — ':'')+'Stability Management System';document.documentElement.lang=LANG;document.documentElement.dir=LANG==='ar'?'rtl':'ltr';
   if(!ME)return loginView();
-  $('#root').innerHTML=`<div id="app"><nav><h1>Stability Mgmt<br><small>${esc(ME.name)} · ${ME.role}</small></h1>${nav.map(n=>`<a class="${n===VIEW?'on':''}" onclick="VIEW='${n}';draw()">${t(n)}</a>`).join('')}<a onclick="logout()">${t('logout')}</a></nav><main>${VIEW==='studies'?`<div class="noprint" style="text-align:end">${IMPORT_BTN()}</div>`:''}${V[VIEW]()}</main></div>`;
+  if(ME.role==='Pending')return $('#root').innerHTML=`<div id="login" class="card"><h2>${esc(ME.name)}</h2><p>حسابك اتسجل وبانتظار تفعيل المسؤول (Admin). مفيش صلاحية على أي بيانات لحد ما يفعّله.</p><div class="row"><button class="p" onclick="chkActive()">تحديث</button><button onclick="logout()">خروج</button></div></div>`;
+  $('#root').innerHTML=`<div id="app"><nav><h1>${company().logo?`<img src="${company().logo}" style="max-height:30px;display:block;margin-bottom:6px">`:''}${esc(coName())}<br><small>Stability Mgmt · ${esc(ME.name)} · ${ME.role}</small></h1>${nav.map(n=>`<a class="${n===VIEW?'on':''}" onclick="VIEW='${n}';draw()">${t(n)}</a>`).join('')}<a onclick="logout()">${t('logout')}</a><small style="display:block;padding:10px 16px;opacity:.55;font-size:11px">${FB?esc(window.FIREBASE_CONFIG.projectId):'Local'}</small></nav><main>${VIEW==='studies'?`<div class="noprint" style="text-align:end">${IMPORT_BTN()}</div>`:''}${V[VIEW]()}</main></div>`;
   const q=document.querySelector('main input[placeholder]');if(q&&FILTER){q.focus();q.setSelectionRange(FILTER.length,FILTER.length)}
 }
 (async()=>{

@@ -6,3 +6,6 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "602186303057",
   appId: "1:602186303057:web:58942bd9b9a8f2f8d61a70"
 };
+
+// اسم الشركة (يظهر على شاشة الدخول وأعلى الصفحات والتقارير)
+window.COMPANY = { name: "Arab Caps" };
